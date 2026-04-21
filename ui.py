@@ -458,10 +458,90 @@ class AssetManager:
 class Button:
     """Simple reusable UI button with hover and click feedback."""
 
-    def __init__(self, rect: pygame.Rect, label: str) -> None:
-        self.rect = rect
-        self.label = label
+    def __init__(
+        self,
+        x: int,
+        y: int,
+        width: int,
+        height: int,
+        text: str,
+        action: str | None = None,
+        padding: int = 14,
+    ) -> None:
+        self.rect = pygame.Rect(x, y, width, height)
+        self.text = text
+        self.label = text
+        self.action = action if action is not None else text
+        self.padding = max(8, padding)
         self.hovered = False
+
+    def _split_text_lines(
+        self,
+        text: str,
+        font: pygame.font.Font,
+        max_width: int,
+    ) -> list[str]:
+        words = text.split()
+        if not words:
+            return [""]
+
+        lines: list[str] = []
+        current = words[0]
+
+        for word in words[1:]:
+            candidate = f"{current} {word}"
+            if font.size(candidate)[0] <= max_width:
+                current = candidate
+            else:
+                lines.append(current)
+                current = word
+
+        lines.append(current)
+        return lines
+
+    def _truncate_text(
+        self,
+        text: str,
+        font: pygame.font.Font,
+        max_width: int,
+    ) -> str:
+        if font.size(text)[0] <= max_width:
+            return text
+
+        suffix = "..."
+        trimmed = text
+        while trimmed and font.size(trimmed + suffix)[0] > max_width:
+            trimmed = trimmed[:-1]
+
+        if not trimmed:
+            return suffix
+        return trimmed + suffix
+
+    def _fit_text_lines(
+        self,
+        base_font: pygame.font.Font,
+        max_width: int,
+        max_height: int,
+    ) -> tuple[pygame.font.Font, list[str]]:
+        font_candidates: list[pygame.font.Font] = [base_font]
+        base_size = max(16, base_font.get_height())
+        for size in range(base_size - 1, 13, -1):
+            font_candidates.append(pygame.font.SysFont("georgia", size, bold=True))
+
+        for candidate_font in font_candidates:
+            lines = self._split_text_lines(self.text, candidate_font, max_width)
+            if len(lines) > 3:
+                continue
+
+            if any(candidate_font.size(line)[0] > max_width for line in lines):
+                continue
+
+            total_height = len(lines) * candidate_font.get_linesize()
+            if total_height <= max_height:
+                return candidate_font, lines
+
+        fallback = pygame.font.SysFont("georgia", 14, bold=True)
+        return fallback, [self._truncate_text(self.text, fallback, max_width)]
 
     def handle_event(self, event: pygame.event.Event) -> bool:
         if event.type == pygame.MOUSEMOTION:
@@ -473,10 +553,12 @@ class Button:
         return False
 
     def draw(self, surface: pygame.Surface, font: pygame.font.Font) -> None:
+        self.hovered = self.rect.collidepoint(pygame.mouse.get_pos())
+
         layer = pygame.Surface(self.rect.size, pygame.SRCALPHA)
 
-        top_color = (156, 46, 51, 244) if not self.hovered else (184, 58, 63, 246)
-        bottom_color = (102, 23, 31, 244) if not self.hovered else (123, 31, 40, 246)
+        top_color = (136, 34, 40, 245) if not self.hovered else (162, 44, 51, 248)
+        bottom_color = (83, 18, 26, 245) if not self.hovered else (105, 28, 35, 248)
 
         for y in range(self.rect.height):
             ratio = y / max(1, self.rect.height - 1)
@@ -492,17 +574,30 @@ class Button:
             )
             layer.blit(shine, (0, 0))
 
+        if self.hovered:
+            pygame.draw.rect(layer, (248, 225, 164, 34), layer.get_rect(), border_radius=14)
+
         surface.blit(layer, self.rect.topleft)
         pygame.draw.rect(surface, GOLD, self.rect, width=3, border_radius=14)
         pygame.draw.rect(surface, (247, 219, 151), self.rect.inflate(-8, -8), width=1, border_radius=12)
 
-        text_shadow = font.render(self.label, True, (30, 7, 10))
-        shadow_rect = text_shadow.get_rect(center=(self.rect.centerx + 1, self.rect.centery + 2))
-        surface.blit(text_shadow, shadow_rect)
+        inner_rect = self.rect.inflate(-(self.padding * 2), -(self.padding * 2))
+        text_font, lines = self._fit_text_lines(font, inner_rect.width, inner_rect.height)
 
-        text_surface = font.render(self.label, True, CREAM)
-        text_rect = text_surface.get_rect(center=self.rect.center)
-        surface.blit(text_surface, text_rect)
+        line_height = text_font.get_linesize()
+        block_height = line_height * len(lines)
+        start_y = self.rect.centery - (block_height // 2)
+
+        for index, line in enumerate(lines):
+            line_surface = text_font.render(line, True, CREAM)
+            line_shadow = text_font.render(line, True, (25, 7, 9))
+
+            line_y = start_y + (index * line_height)
+            shadow_rect = line_shadow.get_rect(center=(self.rect.centerx + 1, line_y + (line_height // 2) + 1))
+            line_rect = line_surface.get_rect(center=(self.rect.centerx, line_y + (line_height // 2)))
+
+            surface.blit(line_shadow, shadow_rect)
+            surface.blit(line_surface, line_rect)
 
 
 def draw_moroccan_background(
@@ -534,6 +629,11 @@ def draw_menu_background(
 
     width, height = surface.get_size()
     vignette = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
+
+    # Deep-red tint keeps menu screens visually consistent even with custom images.
+    tint = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
+    tint.fill((88, 18, 26, 88))
+    surface.blit(tint, (0, 0))
 
     # Soft cinematic darkening at top/bottom so menu text stays readable.
     for y in range(height):

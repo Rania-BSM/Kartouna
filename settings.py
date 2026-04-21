@@ -49,7 +49,11 @@ BLACK = (22, 22, 22)
 WHITE = (244, 244, 244)
 
 # Screen states
-STATE_MENU = "menu"
+STATE_MAIN_MENU = "main_menu"
+STATE_DIFFICULTY_MENU = "difficulty_menu"
 STATE_RULES = "rules"
 STATE_PLAYING = "playing"
 STATE_WINNER = "winner"
+
+# Backward-compatible alias for older code.
+STATE_MENU = STATE_MAIN_MENU

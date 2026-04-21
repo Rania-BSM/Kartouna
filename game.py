@@ -32,7 +32,8 @@ from settings import (
     SCREEN_HEIGHT,
     SCREEN_WIDTH,
     STARTING_TABLE_CARDS,
-    STATE_MENU,
+    STATE_DIFFICULTY_MENU,
+    STATE_MAIN_MENU,
     STATE_PLAYING,
     STATE_RULES,
     STATE_WINNER,
@@ -100,14 +101,13 @@ class Game:
         self.small_font = self.assets.get_font(20)
         self.card_font = self.assets.get_font(19, bold=True)
 
-        self.state = STATE_MENU
+        self.state = STATE_MAIN_MENU
         self.time_since_start = 0.0
         self.victory_time = 0.0
 
-        self.players: list[Player] = [
-            Player("Player 1", "bottom"),
-            Player("Player 2", "top"),
-        ]
+        self.game_mode = "ai" if AI_ENABLED else "local"
+        self.ai_enabled = self.game_mode == "ai"
+        self.players: list[Player] = self._create_players_for_mode(self.game_mode)
         self.current_player_index = 0
         self.deck: Deck | None = None
         self.table_cards: list[Card] = []
@@ -118,19 +118,19 @@ class Game:
         self.round_number = 0
         self.info_message = ""
         self.info_message_timer = 0.0
-        self.ai_enabled = AI_ENABLED
         self.ai_player_index = AI_PLAYER_INDEX if AI_PLAYER_INDEX in (0, 1) else 1
-        self.ai_difficulty = AI_DIFFICULTY
+        self.ai_difficulty = self._normalize_ai_difficulty(AI_DIFFICULTY)
         self.ai_play_delay = max(0.0, AI_PLAY_DELAY)
         self.ai_think_timer = self.ai_play_delay
-        self.selected_mode = "1vsAI" if self.ai_enabled else "1vs1"
 
         self.winner_message = "Winner: Draw"
 
         self.menu_buttons: list[Button] = []
-        self.mode_button: Button | None = None
+        self.difficulty_buttons: list[Button] = []
         self.rules_back_button: Button | None = None
         self.winner_buttons: list[Button] = []
+        self.ui_layout: dict[str, int] = {}
+        self._last_layout_size = self.screen.get_size()
         self._build_buttons()
 
         self.assets.play_music("moroccan_music.mp3", loops=-1)
@@ -142,57 +142,136 @@ class Game:
         except pygame.error:
             return False
 
+    def _menu_layout_values(self) -> dict[str, int]:
+        width, height = self.screen.get_size()
+
+        title_y = max(70, int(height * 0.11))
+        subtitle_y = max(128, int(height * 0.19))
+        button_height = max(56, min(68, int(height * 0.085)))
+        button_gap = max(16, min(24, int(height * 0.028)))
+        first_button_y = max(220, int(height * 0.33))
+
+        main_button_width = min(460, max(320, int(width * 0.40)))
+        secondary_button_width = min(360, max(260, int(width * 0.30)))
+
+        return {
+            "title_y": title_y,
+            "subtitle_y": subtitle_y,
+            "first_button_y": first_button_y,
+            "button_height": button_height,
+            "button_gap": button_gap,
+            "main_button_width": main_button_width,
+            "secondary_button_width": secondary_button_width,
+            "rules_back_width": min(300, max(220, int(width * 0.24))),
+            "rules_back_y": max(height - 70, int(height * 0.90)),
+            "winner_buttons_y": max(390, int(height * 0.55)),
+        }
+
+    def create_menu_buttons(
+        self,
+        labels: list[str],
+        start_y: int,
+        button_width: int,
+        button_height: int,
+        gap: int,
+        actions: list[str] | None = None,
+    ) -> list[Button]:
+        buttons: list[Button] = []
+        button_x = (self.screen.get_width() // 2) - (button_width // 2)
+
+        resolved_actions = (
+            actions if actions is not None else [label.lower().replace(" ", "_") for label in labels]
+        )
+
+        for index, label in enumerate(labels):
+            button_y = start_y + index * (button_height + gap)
+            buttons.append(
+                Button(
+                    button_x,
+                    button_y,
+                    button_width,
+                    button_height,
+                    label,
+                    resolved_actions[index],
+                )
+            )
+
+        return buttons
+
+    def _refresh_layout_if_needed(self) -> None:
+        current_size = self.screen.get_size()
+        if current_size == self._last_layout_size:
+            return
+
+        self._last_layout_size = current_size
+        self._build_buttons()
+
     def _build_buttons(self) -> None:
-        button_width = 300
-        button_height = 62
-        gap = 18
+        self.ui_layout = self._menu_layout_values()
+
+        button_width = self.ui_layout["main_button_width"]
+        button_height = self.ui_layout["button_height"]
+        gap = self.ui_layout["button_gap"]
         self.menu_buttons.clear()
+        self.difficulty_buttons.clear()
         self.winner_buttons.clear()
 
-        first_y = 275
+        main_labels = [
+            "Play Local 2 Players",
+            "Play vs AI",
+            "Rules",
+            "Quit",
+        ]
+        main_actions = ["play_local", "play_ai_menu", "show_rules", "quit_game"]
+        self.menu_buttons = self.create_menu_buttons(
+            labels=main_labels,
+            start_y=self.ui_layout["first_button_y"],
+            button_width=button_width,
+            button_height=button_height,
+            gap=gap,
+            actions=main_actions,
+        )
 
-        start_rect = pygame.Rect(0, 0, button_width, button_height)
-        start_rect.center = (SCREEN_WIDTH // 2, first_y)
-        self.menu_buttons.append(Button(start_rect, "Start Game"))
+        difficulty_labels = ["Easy", "Medium", "Hard", "Back"]
+        difficulty_actions = ["ai_easy", "ai_medium", "ai_hard", "back_main"]
+        self.difficulty_buttons = self.create_menu_buttons(
+            labels=difficulty_labels,
+            start_y=self.ui_layout["first_button_y"],
+            button_width=self.ui_layout["secondary_button_width"],
+            button_height=button_height,
+            gap=gap,
+            actions=difficulty_actions,
+        )
 
-        mode_rect = pygame.Rect(0, 0, button_width, button_height)
-        mode_rect.center = (SCREEN_WIDTH // 2, first_y + (button_height + gap))
-        self.mode_button = Button(mode_rect, self._mode_button_label())
-        self.menu_buttons.append(self.mode_button)
-
-        rules_rect = pygame.Rect(0, 0, button_width, button_height)
-        rules_rect.center = (SCREEN_WIDTH // 2, first_y + 2 * (button_height + gap))
-        self.menu_buttons.append(Button(rules_rect, "Rules"))
-
-        quit_rect = pygame.Rect(0, 0, button_width, button_height)
-        quit_rect.center = (SCREEN_WIDTH // 2, first_y + 3 * (button_height + gap))
-        self.menu_buttons.append(Button(quit_rect, "Quit"))
-
-        back_rect = pygame.Rect(0, 0, 220, 56)
-        back_rect.center = (SCREEN_WIDTH // 2, SCREEN_HEIGHT - 80)
-        self.rules_back_button = Button(back_rect, "Main Menu")
+        back_width = self.ui_layout["rules_back_width"]
+        back_height = max(52, button_height - 4)
+        back_x = (self.screen.get_width() // 2) - (back_width // 2)
+        back_y = self.ui_layout["rules_back_y"] - (back_height // 2)
+        self.rules_back_button = Button(back_x, back_y, back_width, back_height, "Main Menu", "main_menu")
 
         winner_labels = ["Play Again", "Main Menu", "Quit"]
-        first_y = 470
-        for index, label in enumerate(winner_labels):
-            rect = pygame.Rect(0, 0, 260, 56)
-            rect.center = (
-                SCREEN_WIDTH // 2,
-                first_y + index * (56 + 12),
-            )
-            self.winner_buttons.append(Button(rect, label))
+        winner_actions = ["play_again", "main_menu", "quit_game"]
+        self.winner_buttons = self.create_menu_buttons(
+            labels=winner_labels,
+            start_y=self.ui_layout["winner_buttons_y"],
+            button_width=self.ui_layout["secondary_button_width"],
+            button_height=max(52, button_height - 4),
+            gap=max(12, gap - 4),
+            actions=winner_actions,
+        )
 
-    def _mode_button_label(self) -> str:
-        return "Mode: 1 vs AI" if self.selected_mode == "1vsAI" else "Mode: 1 vs 1"
+    def _normalize_ai_difficulty(self, difficulty: str) -> str:
+        level = difficulty.lower().strip()
+        if level in ("easy", "medium", "hard"):
+            return level
+        return "medium"
 
-    def _toggle_mode(self) -> None:
-        if self.selected_mode == "1vsAI":
-            self.selected_mode = "1vs1"
-        else:
-            self.selected_mode = "1vsAI"
+    def _create_players_for_mode(self, mode: str) -> list[Player]:
+        top_name = "AI" if mode == "ai" else "Player 2"
+        return [Player("Player 1", "bottom"), Player(top_name, "top")]
 
-        if self.mode_button:
-            self.mode_button.label = self._mode_button_label()
+    def _back_to_main_menu(self) -> None:
+        self.state = STATE_MAIN_MENU
 
     def _set_info_message(self, message: str, duration: float = 2.8) -> None:
         self.info_message = message
@@ -257,10 +336,15 @@ class Game:
         self._animate_distribution(include_table=include_table_cards)
         return True
 
-    def start_new_game(self) -> None:
-        self.ai_enabled = self.selected_mode == "1vsAI"
+    def start_new_game(self, mode: str | None = None, difficulty: str | None = None) -> None:
+        if mode is not None:
+            self.game_mode = "ai" if mode == "ai" else "local"
+        if difficulty is not None:
+            self.ai_difficulty = self._normalize_ai_difficulty(difficulty)
 
-        self.players = [Player("Player 1", "bottom"), Player("Player 2", "top")]
+        self.ai_enabled = self.game_mode == "ai"
+
+        self.players = self._create_players_for_mode(self.game_mode)
         self.current_player_index = 0
         self.deck = Deck(self.assets)
         self.deck.shuffle()
@@ -578,9 +662,9 @@ class Game:
 
         p1, p2 = self.players
         if p1.score > p2.score:
-            self.winner_message = "Winner: Player 1"
+            self.winner_message = f"Winner: {p1.name}"
         elif p2.score > p1.score:
-            self.winner_message = "Winner: Player 2"
+            self.winner_message = f"Winner: {p2.name}"
         else:
             self.winner_message = "Winner: Draw"
 
@@ -595,8 +679,10 @@ class Game:
                 self.running = False
                 return
 
-            if self.state == STATE_MENU:
+            if self.state == STATE_MAIN_MENU:
                 self._handle_menu_event(event)
+            elif self.state == STATE_DIFFICULTY_MENU:
+                self._handle_difficulty_event(event)
             elif self.state == STATE_RULES:
                 self._handle_rules_event(event)
             elif self.state == STATE_PLAYING:
@@ -607,26 +693,44 @@ class Game:
     def _handle_menu_event(self, event: pygame.event.Event) -> None:
         for button in self.menu_buttons:
             if button.handle_event(event):
-                if button.label == "Start Game":
-                    self.start_new_game()
-                elif button is self.mode_button:
-                    self._toggle_mode()
-                elif button.label == "Rules":
+                if button.action == "play_local":
+                    self.start_new_game(mode="local")
+                elif button.action == "play_ai_menu":
+                    self.state = STATE_DIFFICULTY_MENU
+                elif button.action == "show_rules":
                     self.state = STATE_RULES
-                elif button.label == "Quit":
+                elif button.action == "quit_game":
                     self.running = False
+
+    def _handle_difficulty_event(self, event: pygame.event.Event) -> None:
+        if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+            self._back_to_main_menu()
+            return
+
+        for button in self.difficulty_buttons:
+            if button.handle_event(event):
+                if button.action == "back_main":
+                    self._back_to_main_menu()
+                elif button.action == "ai_easy":
+                    self.start_new_game(mode="ai", difficulty="easy")
+                elif button.action == "ai_medium":
+                    self.start_new_game(mode="ai", difficulty="medium")
+                elif button.action == "ai_hard":
+                    self.start_new_game(mode="ai", difficulty="hard")
+                else:
+                    self.start_new_game(mode="ai", difficulty="medium")
 
     def _handle_rules_event(self, event: pygame.event.Event) -> None:
         if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-            self.state = STATE_MENU
+            self._back_to_main_menu()
             return
 
         if self.rules_back_button and self.rules_back_button.handle_event(event):
-            self.state = STATE_MENU
+            self._back_to_main_menu()
 
     def _handle_playing_event(self, event: pygame.event.Event) -> None:
         if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-            self.state = STATE_MENU
+            self._back_to_main_menu()
             return
 
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -637,11 +741,11 @@ class Game:
     def _handle_winner_event(self, event: pygame.event.Event) -> None:
         for button in self.winner_buttons:
             if button.handle_event(event):
-                if button.label == "Play Again":
+                if button.action == "play_again":
                     self.start_new_game()
-                elif button.label == "Main Menu":
-                    self.state = STATE_MENU
-                elif button.label == "Quit":
+                elif button.action == "main_menu":
+                    self._back_to_main_menu()
+                elif button.action == "quit_game":
                     self.running = False
 
     def update(self, dt: float) -> None:
@@ -672,47 +776,107 @@ class Game:
             if animation in self.animations:
                 self.animations.remove(animation)
 
-    def _draw_title(self, title: str, y: int) -> None:
-        shadow = self.title_font.render(title, True, BLACK)
-        shadow_rect = shadow.get_rect(center=(SCREEN_WIDTH // 2 + 3, y + 3))
+    def _draw_title(
+        self,
+        title: str,
+        y: int,
+        font: pygame.font.Font | None = None,
+    ) -> None:
+        title_font = font if font is not None else self.title_font
+        center_x = self.screen.get_width() // 2
+
+        shadow = title_font.render(title, True, BLACK)
+        shadow_rect = shadow.get_rect(center=(center_x + 3, y + 3))
         self.screen.blit(shadow, shadow_rect)
 
-        title_surface = self.title_font.render(title, True, LIGHT_GOLD)
-        title_rect = title_surface.get_rect(center=(SCREEN_WIDTH // 2, y))
+        title_surface = title_font.render(title, True, LIGHT_GOLD)
+        title_rect = title_surface.get_rect(center=(center_x, y))
         self.screen.blit(title_surface, title_rect)
 
-    def _draw_menu(self) -> None:
-        panel = pygame.Rect(0, 0, 670, 610)
-        panel.center = (SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2)
-        draw_panel(self.screen, panel, alpha=130)
+    def _draw_menu_header(self, section_title: str) -> None:
+        layout = self.ui_layout
+        width, height = self.screen.get_size()
 
-        self._draw_title("Kartouna", y=170)
+        title_font = self.assets.get_font(max(54, min(82, int(height * 0.11))), bold=True)
+        subtitle_font = self.assets.get_font(max(24, min(34, int(height * 0.045))), bold=True)
+        section_font = self.assets.get_font(max(20, min(30, int(height * 0.037))), bold=True)
 
-        subtitle = self.subtitle_font.render("Moroccan Card Heritage", True, CREAM)
-        subtitle_rect = subtitle.get_rect(center=(SCREEN_WIDTH // 2, 226))
+        self._draw_title("Kartouna", layout["title_y"], title_font)
+
+        subtitle = subtitle_font.render("Moroccan Ronda Card Game", True, CREAM)
+        subtitle_rect = subtitle.get_rect(center=(width // 2, layout["subtitle_y"]))
         self.screen.blit(subtitle, subtitle_rect)
 
-        line = pygame.Rect(0, 0, 360, 2)
-        line.center = (SCREEN_WIDTH // 2, 252)
+        section = section_font.render(section_title, True, LIGHT_GOLD)
+        section_rect = section.get_rect(center=(width // 2, layout["subtitle_y"] + 40))
+        self.screen.blit(section, section_rect)
+
+        line_width = min(420, int(width * 0.34))
+        line = pygame.Rect(0, 0, line_width, 2)
+        line.center = (width // 2, layout["subtitle_y"] + 64)
         pygame.draw.rect(self.screen, GOLD, line)
 
-        mode_text = self.text_font.render(
-            f"Selected Mode: {'1 vs AI' if self.selected_mode == '1vsAI' else '1 vs 1'}",
-            True,
-            LIGHT_GOLD,
-        )
-        mode_rect = mode_text.get_rect(center=(SCREEN_WIDTH // 2, 279))
-        self.screen.blit(mode_text, mode_rect)
+    def _wrap_text_lines(
+        self,
+        text: str,
+        font: pygame.font.Font,
+        max_width: int,
+    ) -> list[str]:
+        words = text.split()
+        if not words:
+            return [""]
+
+        lines: list[str] = []
+        current = words[0]
+        for word in words[1:]:
+            candidate = f"{current} {word}"
+            if font.size(candidate)[0] <= max_width:
+                current = candidate
+            else:
+                lines.append(current)
+                current = word
+        lines.append(current)
+        return lines
+
+    def _draw_menu(self) -> None:
+        width, height = self.screen.get_size()
+        panel = pygame.Rect(0, 0, min(760, width - 160), min(620, height - 42))
+        panel.center = (width // 2, height // 2)
+        draw_panel(self.screen, panel, alpha=140)
+
+        self._draw_menu_header("Main Menu")
+
+        helper_font = self.assets.get_font(max(18, min(24, int(height * 0.03))))
+        helper_text = helper_font.render("Choose how you want to play", True, LIGHT_GOLD)
+        helper_rect = helper_text.get_rect(center=(width // 2, self.ui_layout["first_button_y"] - 24))
+        self.screen.blit(helper_text, helper_rect)
 
         for button in self.menu_buttons:
             button.draw(self.screen, self.button_font)
 
+    def _draw_difficulty_menu(self) -> None:
+        width, height = self.screen.get_size()
+        panel = pygame.Rect(0, 0, min(700, width - 180), min(610, height - 56))
+        panel.center = (width // 2, height // 2)
+        draw_panel(self.screen, panel, alpha=145)
+
+        self._draw_menu_header("Choose AI Difficulty")
+
+        info_font = self.assets.get_font(max(17, min(22, int(height * 0.028))))
+        info = info_font.render(f"Selected level: {self.ai_difficulty.title()}", True, LIGHT_GOLD)
+        info_rect = info.get_rect(center=(width // 2, self.ui_layout["first_button_y"] - 24))
+        self.screen.blit(info, info_rect)
+
+        for button in self.difficulty_buttons:
+            button.draw(self.screen, self.button_font)
+
     def _draw_rules(self) -> None:
-        panel = pygame.Rect(0, 0, 980, 620)
-        panel.center = (SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2)
+        width, height = self.screen.get_size()
+        panel = pygame.Rect(0, 0, min(1090, width - 90), min(670, height - 40))
+        panel.center = (width // 2, height // 2)
         draw_panel(self.screen, panel, alpha=165)
 
-        self._draw_title("Rules", y=110)
+        self._draw_menu_header("Rules")
 
         rules = [
             "1. Deck: 40 cards (1-7, 10, 11, 12) in Dhab/Sif/Kasa/3ssa suits.",
@@ -727,11 +891,38 @@ class Game:
             "10. Press ESC during the game to return to menu.",
         ]
 
-        start_y = 168
-        for index, line in enumerate(rules):
-            text = self.text_font.render(line, True, WHITE)
-            text_rect = text.get_rect(midleft=(165, start_y + index * 42))
-            self.screen.blit(text, text_rect)
+        content_rect = pygame.Rect(
+            panel.left + 52,
+            self.ui_layout["subtitle_y"] + 84,
+            panel.width - 104,
+            panel.height - 210,
+        )
+
+        font_size = max(16, min(24, int(height * 0.03)))
+        grouped_lines: list[list[str]] = []
+        rule_font = self.assets.get_font(font_size)
+        paragraph_gap = 8
+
+        while font_size >= 15:
+            rule_font = self.assets.get_font(font_size)
+            grouped_lines = [
+                self._wrap_text_lines(rule_line, rule_font, content_rect.width)
+                for rule_line in rules
+            ]
+            line_count = sum(len(group) for group in grouped_lines)
+            total_height = (line_count * rule_font.get_linesize()) + ((len(grouped_lines) - 1) * paragraph_gap)
+            if total_height <= content_rect.height:
+                break
+            font_size -= 1
+
+        y = content_rect.top
+        for group in grouped_lines:
+            for line in group:
+                text = rule_font.render(line, True, WHITE)
+                text_rect = text.get_rect(midleft=(content_rect.left, y + (rule_font.get_linesize() // 2)))
+                self.screen.blit(text, text_rect)
+                y += rule_font.get_linesize()
+            y += paragraph_gap
 
         if self.rules_back_button:
             self.rules_back_button.draw(self.screen, self.button_font)
@@ -750,12 +941,12 @@ class Game:
         p2 = self.players[1]
 
         p2_line = self.small_font.render(
-            f"P2 Score: {p2.score} | Hand: {len(p2.hand)} | Captured: {len(p2.captured_cards)}",
+            f"{p2.name} Score: {p2.score} | Hand: {len(p2.hand)} | Captured: {len(p2.captured_cards)}",
             True,
             CREAM,
         )
         p1_line = self.small_font.render(
-            f"P1 Score: {p1.score} | Hand: {len(p1.hand)} | Captured: {len(p1.captured_cards)}",
+            f"{p1.name} Score: {p1.score} | Hand: {len(p1.hand)} | Captured: {len(p1.captured_cards)}",
             True,
             CREAM,
         )
@@ -829,6 +1020,8 @@ class Game:
 
         if self._is_ai_turn():
             hint_text = f"AI ({self.ai_difficulty.title()}) is thinking..."
+        elif self.game_mode == "ai":
+            hint_text = "Your turn: click one card from your hand"
         else:
             hint_text = "Click one card from the active player hand"
 
@@ -837,44 +1030,61 @@ class Game:
         self.screen.blit(hint, hint_rect)
 
     def _draw_winner(self) -> None:
-        panel = pygame.Rect(0, 0, 650, 620)
-        panel.center = (SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2)
+        width, height = self.screen.get_size()
+        panel = pygame.Rect(0, 0, min(780, width - 180), min(640, height - 70))
+        panel.center = (width // 2, height // 2)
         draw_panel(self.screen, panel, alpha=160)
 
-        center = (SCREEN_WIDTH // 2, 190)
-        rings = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        self._draw_menu_header("Winner")
+
+        center = (width // 2, max(240, int(height * 0.39)))
+        rings = pygame.Surface((width, height), pygame.SRCALPHA)
         for i in range(6):
             radius = 80 + (i * 23) + int(math.sin(self.victory_time * 2.8 + i) * 6)
             alpha = max(18, 70 - i * 8)
             pygame.draw.circle(rings, (226, 179, 74, alpha), center, radius, width=2)
         self.screen.blit(rings, (0, 0))
 
-        pulse_size = int(62 + (math.sin(self.victory_time * 5.5) * 4))
+        pulse_size = max(40, int(56 + (math.sin(self.victory_time * 5.5) * 4)))
         winner_font = self.assets.get_font(pulse_size, bold=True)
 
         winner_text = winner_font.render(self.winner_message, True, LIGHT_GOLD)
-        winner_rect = winner_text.get_rect(center=(SCREEN_WIDTH // 2, 190))
+        winner_rect = winner_text.get_rect(center=center)
         self.screen.blit(winner_text, winner_rect)
 
-        score_line = self.subtitle_font.render(
-            f"Final Score - P1: {self.players[0].score} | P2: {self.players[1].score}",
-            True,
-            CREAM,
+        score_text = (
+            f"Final Score - {self.players[0].name}: {self.players[0].score} | "
+            f"{self.players[1].name}: {self.players[1].score}"
         )
-        score_rect = score_line.get_rect(center=(SCREEN_WIDTH // 2, 300))
+
+        score_font_size = max(18, min(32, int(height * 0.04)))
+        score_font = self.assets.get_font(score_font_size, bold=True)
+        score_line = score_font.render(score_text, True, CREAM)
+
+        while score_font_size > 16 and score_line.get_width() > panel.width - 40:
+            score_font_size -= 1
+            score_font = self.assets.get_font(score_font_size, bold=True)
+            score_line = score_font.render(score_text, True, CREAM)
+
+        score_rect = score_line.get_rect(center=(width // 2, center[1] + 82))
         self.screen.blit(score_line, score_rect)
 
         for button in self.winner_buttons:
             button.draw(self.screen, self.button_font)
 
     def render(self) -> None:
-        if self.state == STATE_MENU:
-            draw_menu_background(self.screen, self.assets, self.time_since_start)
-            self._draw_menu()
-        else:
-            draw_moroccan_background(self.screen, self.assets, self.time_since_start)
+        self._refresh_layout_if_needed()
 
-        if self.state == STATE_RULES:
+        if self.state == STATE_PLAYING:
+            draw_moroccan_background(self.screen, self.assets, self.time_since_start)
+        else:
+            draw_menu_background(self.screen, self.assets, self.time_since_start)
+
+        if self.state == STATE_MAIN_MENU:
+            self._draw_menu()
+        elif self.state == STATE_DIFFICULTY_MENU:
+            self._draw_difficulty_menu()
+        elif self.state == STATE_RULES:
             self._draw_rules()
         elif self.state == STATE_PLAYING:
             self._draw_playing()
