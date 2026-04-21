@@ -206,6 +206,53 @@ class Game:
         self._last_layout_size = current_size
         self._build_buttons()
 
+    def _playing_layout_values(self) -> dict[str, int]:
+        width, height = self.screen.get_size()
+
+        score_panel_width = min(240, max(180, int(width * 0.18)))
+        score_panel_height = max(66, min(82, int(height * 0.11)))
+        score_panel_y = max(12, int(height * 0.02))
+
+        turn_badge_width = min(460, max(320, int(width * 0.36)))
+        turn_badge_height = max(62, min(76, int(height * 0.10)))
+        turn_badge_y = score_panel_y
+
+        top_ui_bottom = max(
+            score_panel_y + score_panel_height,
+            turn_badge_y + turn_badge_height,
+        )
+
+        top_hand_y = top_ui_bottom + 20
+        bottom_hand_y = height - CARD_HEIGHT - 78
+        instruction_badge_y = height - 56
+
+        table_top = top_hand_y + CARD_HEIGHT + 20
+        table_bottom = bottom_hand_y - 18
+        table_height = max(170, table_bottom - table_top)
+        table_y = table_bottom - table_height
+
+        table_margin = max(120, int(width * 0.10))
+        table_width = max(620, width - (table_margin * 2))
+
+        return {
+            "score_panel_width": score_panel_width,
+            "score_panel_height": score_panel_height,
+            "score_panel_y": score_panel_y,
+            "score_left_x": 20,
+            "score_right_x": width - score_panel_width - 20,
+            "turn_badge_width": turn_badge_width,
+            "turn_badge_height": turn_badge_height,
+            "turn_badge_y": turn_badge_y,
+            "top_hand_y": top_hand_y,
+            "bottom_hand_y": bottom_hand_y,
+            "instruction_badge_y": instruction_badge_y,
+            "table_x": (width - table_width) // 2,
+            "table_y": table_y,
+            "table_width": table_width,
+            "table_height": table_height,
+            "info_message_y": turn_badge_y + turn_badge_height + 16,
+        }
+
     def _build_buttons(self) -> None:
         self.ui_layout = self._menu_layout_values()
 
@@ -413,8 +460,10 @@ class Game:
             return []
 
         total_width = (count * CARD_WIDTH) + ((count - 1) * CARD_GAP)
-        start_x = (SCREEN_WIDTH - total_width) // 2
-        y = SCREEN_HEIGHT - CARD_HEIGHT - 30 if player_index == 0 else 30
+        width = self.screen.get_width()
+        layout = self._playing_layout_values()
+        start_x = (width - total_width) // 2
+        y = layout["bottom_hand_y"] if player_index == 0 else layout["top_hand_y"]
 
         return [(start_x + index * (CARD_WIDTH + CARD_GAP), y) for index in range(count)]
 
@@ -928,31 +977,53 @@ class Game:
             self.rules_back_button.draw(self.screen, self.button_font)
 
     def _draw_score_panels(self) -> None:
-        top_panel = pygame.Rect(20, 15, 355, 92)
-        bottom_panel = pygame.Rect(20, SCREEN_HEIGHT - 107, 355, 92)
-        turn_panel = pygame.Rect(0, 0, 530, 72)
-        turn_panel.center = (SCREEN_WIDTH // 2, 38)
+        layout = self._playing_layout_values()
+        panel_w = layout["score_panel_width"]
+        panel_h = layout["score_panel_height"]
 
-        draw_panel(self.screen, top_panel, alpha=150)
-        draw_panel(self.screen, bottom_panel, alpha=150)
-        draw_panel(self.screen, turn_panel, alpha=160)
+        top_panel = pygame.Rect(
+            layout["score_left_x"],
+            layout["score_panel_y"],
+            panel_w,
+            panel_h,
+        )
+        bottom_panel = pygame.Rect(
+            layout["score_right_x"],
+            layout["score_panel_y"],
+            panel_w,
+            panel_h,
+        )
+
+        turn_panel = pygame.Rect(0, 0, layout["turn_badge_width"], layout["turn_badge_height"])
+        turn_panel.midtop = (self.screen.get_width() // 2, layout["turn_badge_y"])
+
+        draw_panel(self.screen, top_panel, alpha=162)
+        draw_panel(self.screen, bottom_panel, alpha=162)
+        draw_panel(self.screen, turn_panel, alpha=172)
 
         p1 = self.players[0]
         p2 = self.players[1]
 
-        p2_line = self.small_font.render(
-            f"{p2.name} Score: {p2.score} | Hand: {len(p2.hand)} | Captured: {len(p2.captured_cards)}",
-            True,
-            CREAM,
-        )
-        p1_line = self.small_font.render(
-            f"{p1.name} Score: {p1.score} | Hand: {len(p1.hand)} | Captured: {len(p1.captured_cards)}",
-            True,
-            CREAM,
-        )
+        def draw_player_panel(rect: pygame.Rect, player: Player, label: str) -> None:
+            title = self.small_font.render(label, True, LIGHT_GOLD)
+            title_rect = title.get_rect(midleft=(rect.left + 14, rect.top + 18))
+            self.screen.blit(title, title_rect)
 
-        self.screen.blit(p2_line, (33, 41 - p2_line.get_height() // 2))
-        self.screen.blit(p1_line, (33, SCREEN_HEIGHT - 73 - p1_line.get_height() // 2))
+            value_font = self.assets.get_font(29, bold=True)
+            score_value = value_font.render(str(player.score), True, CREAM)
+            score_rect = score_value.get_rect(midleft=(rect.left + 16, rect.centery + 6))
+            self.screen.blit(score_value, score_rect)
+
+            stats = self.small_font.render(
+                f"H {len(player.hand)} | C {len(player.captured_cards)}",
+                True,
+                CREAM,
+            )
+            stats_rect = stats.get_rect(midright=(rect.right - 14, rect.centery + 6))
+            self.screen.blit(stats, stats_rect)
+
+        draw_player_panel(top_panel, p2, p2.name)
+        draw_player_panel(bottom_panel, p1, p1.name)
 
         current = self.players[self.current_player_index]
         if self.turn_locked:
@@ -961,17 +1032,8 @@ class Game:
             turn_label = f"Current Turn: {current.name}"
 
         turn_text = self.text_font.render(turn_label, True, LIGHT_GOLD)
-        turn_rect = turn_text.get_rect(center=(turn_panel.centerx, turn_panel.centery - 12))
+        turn_rect = turn_text.get_rect(center=(turn_panel.centerx, turn_panel.centery))
         self.screen.blit(turn_text, turn_rect)
-
-        deck_remaining = self.deck.remaining() if self.deck else 0
-        round_text = self.small_font.render(
-            f"Round: {self.round_number} | Deck: {deck_remaining}",
-            True,
-            CREAM,
-        )
-        round_rect = round_text.get_rect(center=(turn_panel.centerx, turn_panel.centery + 14))
-        self.screen.blit(round_text, round_rect)
 
     def _draw_deck_placeholder(self) -> None:
         deck_x, deck_y = self._deck_position()
@@ -1006,7 +1068,14 @@ class Game:
             card.draw(self.screen, self.card_font, hidden=False, outlined=False)
 
     def _draw_playing(self) -> None:
-        table_panel = pygame.Rect(130, 175, SCREEN_WIDTH - 260, SCREEN_HEIGHT - 350)
+        layout = self._playing_layout_values()
+
+        table_panel = pygame.Rect(
+            layout["table_x"],
+            layout["table_y"],
+            layout["table_width"],
+            layout["table_height"],
+        )
         draw_zellige_table(self.screen, table_panel, self.assets, self.time_since_start)
 
         self._draw_score_panels()
@@ -1015,7 +1084,7 @@ class Game:
 
         if self.info_message:
             info_surface = self.small_font.render(self.info_message, True, LIGHT_GOLD)
-            info_rect = info_surface.get_rect(center=(SCREEN_WIDTH // 2, 88))
+            info_rect = info_surface.get_rect(center=(self.screen.get_width() // 2, layout["info_message_y"]))
             self.screen.blit(info_surface, info_rect)
 
         if self._is_ai_turn():
@@ -1025,8 +1094,12 @@ class Game:
         else:
             hint_text = "Click one card from the active player hand"
 
+        hint_badge = pygame.Rect(0, 0, min(620, self.screen.get_width() - 180), 44)
+        hint_badge.center = (self.screen.get_width() // 2, layout["instruction_badge_y"])
+        draw_panel(self.screen, hint_badge, alpha=170)
+
         hint = self.small_font.render(hint_text, True, WHITE)
-        hint_rect = hint.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 16))
+        hint_rect = hint.get_rect(center=hint_badge.center)
         self.screen.blit(hint, hint_rect)
 
     def _draw_winner(self) -> None:
